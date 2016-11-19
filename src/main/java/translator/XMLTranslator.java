@@ -1,7 +1,6 @@
 package translator;
 
-import com.rabbitmq.client.AMQP;
-import com.rabbitmq.client.AMQP.BasicProperties;
+import com.rabbitmq.client.AMQP.*;
 import com.rabbitmq.client.Channel;
 import com.rabbitmq.client.Consumer;
 import com.rabbitmq.client.DefaultConsumer;
@@ -10,6 +9,7 @@ import connector.RabbitMQConnector;
 import java.io.IOException;
 import java.io.StringReader;
 import java.io.StringWriter;
+import java.util.Map;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import javax.xml.bind.JAXBContext;
@@ -31,7 +31,7 @@ public class XMLTranslator {
     private final String EXCHANGENAME = "whatTranslator.xml";
     private final String BANKEXCHANGENAME = "cphbusiness.bankXML";
     private final MessageUtility util = new MessageUtility();
-    private final String REPLYTOQUENAME = "helloABCDE";//bank will send the reply to this que. Change it later. This is test que.
+    private final String REPLYTOQUENAME = "whatNormalizerQueue";
 
     public void init() throws IOException {
         channel = connector.getChannel();
@@ -41,26 +41,32 @@ public class XMLTranslator {
         receive();
     }
 
-    public boolean receive() throws IOException {
+    private boolean receive() throws IOException {
 
         System.out.println(" [*] Waiting for messages.");
+
         final Consumer consumer = new DefaultConsumer(channel) {
 
             @Override
-            public void handleDelivery(String consumerTag, Envelope envelope, AMQP.BasicProperties properties, byte[] body) throws IOException {
-                String corrId = properties.getCorrelationId();
-                System.out.println(" [x] Received ");
-                send(corrId, body);
+            public void handleDelivery(String consumerTag, Envelope envelope, BasicProperties properties, byte[] body) throws IOException {
+                try {
+                    System.out.println(" [x] Received ");
+                    send(properties, body);
+                }
+                finally {
+                    System.out.println(" [x] Done");
+                    channel.basicAck(envelope.getDeliveryTag(), false);
+                }
             }
         };
-        channel.basicConsume(queueName, true, consumer);
+        channel.basicConsume(queueName, false, consumer);
         return true;
     }
 
-    private BasicProperties propBuilder(String corrId) {
+    private BasicProperties propBuilder(String corrId, Map<String, Object> headers) {
         BasicProperties.Builder builder = new BasicProperties.Builder();
         builder.replyTo(REPLYTOQUENAME);
-
+        builder.headers(headers);
         builder.correlationId(corrId);
         BasicProperties prop = builder.build();
         return prop;
@@ -78,14 +84,12 @@ public class XMLTranslator {
         return res.substring(res.indexOf("<?xml"));
     }
 
-    public boolean send(String corrId, byte[] body) throws IOException {
+    public boolean send(BasicProperties prop, byte[] body) throws IOException {
 
         try {
             JAXBContext jc = JAXBContext.newInstance(XMLData.class);
-            // Data data = (Data) util.deSerializeBody(body);
             String bodyString = removeBom(new String(body));
             Data data = unmarchal(bodyString);
-
             XMLData xmlData = util.convertToXMLData(data);
             Marshaller marshaller = jc.createMarshaller();
             marshaller.setProperty(Marshaller.JAXB_FORMATTED_OUTPUT, true);
@@ -94,16 +98,14 @@ public class XMLTranslator {
             marshaller.marshal(je2, sw);
             String xmlString = sw.toString();
             System.out.println("xml" + xmlString);
-            BasicProperties prop = propBuilder(corrId);
-            channel.basicPublish(BANKEXCHANGENAME, "", prop, xmlString.getBytes());
+            String corrId = prop.getCorrelationId();
+            BasicProperties newProp = propBuilder(corrId, prop.getHeaders());
+            channel.basicPublish(BANKEXCHANGENAME, "", newProp, xmlString.getBytes());
             return true;
         }
         catch (JAXBException ex) {
             Logger.getLogger(XMLTranslator.class.getName()).log(Level.SEVERE, null, ex);
         }
-
-       
         return false;
     }
-
 }
