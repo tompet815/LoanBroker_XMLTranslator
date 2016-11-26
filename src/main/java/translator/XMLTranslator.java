@@ -28,7 +28,8 @@ public class XMLTranslator {
 
     private Channel channel;
     private String queueName;
-    private final String EXCHANGENAME = "whatTranslator.xml";
+    private final String EXCHANGENAME = "whatTranslator";
+    private final String ROUTING_KEY="xml";
     private final String BANKEXCHANGENAME = "cphbusiness.bankXML";
     private final MessageUtility util = new MessageUtility();
     private final String REPLYTOQUENAME = "whatNormalizerQueue";
@@ -37,7 +38,7 @@ public class XMLTranslator {
         channel = connector.getChannel();
         channel.exchangeDeclare(EXCHANGENAME, "direct");
         queueName = channel.queueDeclare().getQueue();
-        channel.queueBind(queueName, EXCHANGENAME, "");
+        channel.queueBind(queueName, EXCHANGENAME, ROUTING_KEY);
         receive();
     }
 
@@ -90,6 +91,10 @@ public class XMLTranslator {
             JAXBContext jc = JAXBContext.newInstance(XMLData.class);
             String bodyString = removeBom(new String(body));
             Data data = unmarchal(bodyString);
+             String ssn=data.getSsn();
+            String ssnWithoutBind=ssn.replace("-","");
+            data.setSsn(ssnWithoutBind);            
+            System.out.println("sending SSN :"+ssnWithoutBind);
             XMLData xmlData = util.convertToXMLData(data);
             Marshaller marshaller = jc.createMarshaller();
             marshaller.setProperty(Marshaller.JAXB_FORMATTED_OUTPUT, true);
